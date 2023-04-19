@@ -7,7 +7,9 @@ import java.net.Socket;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class Controller {
 
@@ -16,6 +18,7 @@ public class Controller {
     private int timeout;
     private int rebalance;
 
+    private final Map<Socket, Integer> reloadTries;
     protected final Map<Integer, DstoreModel> dstores;
     protected final Map<String, Index> indices;
 
@@ -26,6 +29,7 @@ public class Controller {
         this.rebalance = rebalance;
         dstores = Collections.synchronizedMap(new HashMap<>());
         indices = Collections.synchronizedMap(new HashMap<>());
+        reloadTries = Collections.synchronizedMap(new HashMap<>());
     }
 
     public static void main(String[] args) {
@@ -108,8 +112,8 @@ public class Controller {
             // Messages from client
             case Protocol.LIST_TOKEN -> list(client);
             case Protocol.STORE_TOKEN -> store(client, message[1], message[2]);
-//            case Protocol.LOAD_TOKEN -> load(client, message[1]);
-//            case Protocol.RELOAD_TOKEN -> reLoad(client, message[1]);
+            case Protocol.LOAD_TOKEN -> load(client, message[1]);
+            case Protocol.RELOAD_TOKEN -> reload(client, message[1]);
 //            case Protocol.REMOVE_TOKEN -> remove(client, message[1]);
             default -> System.out.println("Malformed message received " + Arrays.toString(message));
         }
@@ -176,6 +180,59 @@ public class Controller {
             System.err.println("There was an unknown error when creating the DIndex to store or when sending the STORE_TO message to client: " + client.getPort());
         }
     }
+
+    private void load(Socket client, String fileName) {
+        synchronized (reloadTries) {
+            int tries;
+            if (reloadTries.containsKey(client)) {
+                tries = reloadTries.get(client);
+            } else {
+                tries = 0;
+                reloadTries.put(client, 0);
+            }
+            AtomicInteger dPort = new AtomicInteger(-1);
+            AtomicLong fileSize = new AtomicLong(-1);
+            System.out.println("Looking for " + fileName + " in our server...");
+            AtomicBoolean errorLoad = new AtomicBoolean(false);
+            AtomicBoolean breakPoint = new AtomicBoolean(false);
+            indices.forEach((indexName, dIndex) -> {
+                if (breakPoint.get()) {
+                    return;
+                }
+                if (indexName.equals(fileName) && dIndex.getStoredByKeys().size() > tries) {
+                    Integer port = dIndex.getStoredByKeys().get(tries);
+                    System.out.println("Found the file " + fileName + " it is stored by " + port + " and has fileSize " + dIndex.getFilesize());
+                    dPort.set(port);
+                    fileSize.set(dIndex.getFilesize());
+                    breakPoint.set(true);
+                    errorLoad.set(false);
+                } else {
+                    errorLoad.set(true);
+                }
+            });
+            if (!errorLoad.get()) {
+                if (dPort.get() < 0 || fileSize.get() < 0) {
+                    System.out.println("Informing the client that the file " + fileName + " was not found");
+                    send(Protocol.ERROR_FILE_DOES_NOT_EXIST_TOKEN, client);
+                } else {
+                    System.out.println("Telling the client to get the file " + fileName + " from the DStore " + dPort);
+                    send(Protocol.LOAD_FROM_TOKEN + " " + dPort + " " + fileSize, client);
+                }
+            } else {
+                send(Protocol.ERROR_LOAD_TOKEN, client);
+                reloadTries.remove(client);
+            }
+        }
+    }
+
+    private void reload(Socket client, String fileName) {
+        synchronized (reloadTries) {
+            System.out.println("Client had trouble doing the LOAD function, will try performing RELOAD");
+            reloadTries.put(client, reloadTries.get(client) + 1);
+            load(client, fileName);
+        }
+    }
+
 
     private void waitForStoreACKs(Index dIndex, ArrayList<DstoreModel> selectedDstores, CountDownLatch latch) {
         for (DstoreModel dstoreModel : selectedDstores) {

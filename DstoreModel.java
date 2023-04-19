@@ -4,6 +4,7 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -16,7 +17,7 @@ public class DstoreModel {
     private PrintWriter writer;
     private int timeout;
     private boolean dead;
-    private final Queue<String> messageQueue;
+    private final ArrayList<String> messageQueue;
     private int numberOfFiles;
 
     public DstoreModel(Socket socket, int port, int timeout) {
@@ -27,9 +28,10 @@ public class DstoreModel {
         try {
             reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             writer = new PrintWriter(socket.getOutputStream(), true);
-            messageQueue = new LinkedList<>();
-            new Thread(this::start);
+            messageQueue = new ArrayList<>();
+            new Thread(this::start).start();
         } catch (IOException e) {
+            dead = true;
             throw new RuntimeException(e);
         }
     }
@@ -44,12 +46,13 @@ public class DstoreModel {
                 if(message == null) {
                     //Disconnect
                     dead = true;
+//                    remover.removeDstore(port, socket);
                 }
                 else {
                     messageQueue.add(message);
                 }
-            }  catch(IOException e) {
-                e.printStackTrace();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
             }
         }
     }
@@ -71,7 +74,7 @@ public class DstoreModel {
 
     private String getMessageFromQueue(String expectedMessages) {
         synchronized (messageQueue) {
-            for (String message : messageQueue) {
+            for (String message : getMessageQueue()) {
                 if (message.equals(expectedMessages)) {
                     return message;
                 }
@@ -109,7 +112,7 @@ public class DstoreModel {
         return dead;
     }
 
-    public Queue<String> getMessageQueue() {
+    public ArrayList<String> getMessageQueue() {
         return messageQueue;
     }
 
