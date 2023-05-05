@@ -2,7 +2,9 @@ import java.io.*;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Objects;
 
 public class Dstore {
 
@@ -155,15 +157,85 @@ public class Dstore {
     }
 
     private void remove(Socket client, String fileName) {
+//        try {
+//            System.out.println("Store " + port + " removing " + filename + "...");
+//            //Remove the file from fileFolder
+//            Path path = new File(fileFolder, filename).toPath();
+//
+//            String controllerMessage;
+//            if(Files.deleteIfExists(path)) {
+//                System.out.println("Store " + port + " removed " + filename);
+//                //Send REMOVE_ACK message to client (the controller)
+//                synchronized(controllerOut) {
+//                    controllerMessage = Protocol.REMOVE_ACK_TOKEN + " " + filename;
+//                }
+//            }
+//            else {
+//                System.out.println("Store " + port + " couldn't remove " + filename);
+//                //Send DOES NOT EXIST error
+//                synchronized(controllerOut) {
+//                    controllerMessage = Protocol.ERROR_FILE_DOES_NOT_EXIST_TOKEN + " " + filename;
+//                }
+//            }
+//            controllerOut.println(controllerMessage);
+//            messageSent(controllerSocket, controllerMessage);
+//        }
+//        catch(IOException e) {
+//            e.printStackTrace();
+//        }
 
+        System.out.println("Remove of " + fileName + " has been requested by Controller");
+        try {
+            Path filePath = new File(fileFolder, fileName).toPath();
+            System.out.println("File " + filePath + " was found, attempting to remove it");
+            if (filePath.toFile().delete()) {
+                System.out.println("Deleted the file: " + filePath);
+                synchronized (controllerOut) {
+                    controllerOut.println(Protocol.REMOVE_ACK_TOKEN + " " + fileName);
+                }
+            } else {
+                System.out.println("Failed to delete the file " + fileName);
+            }
+        } catch (Exception e) {
+            System.err.println("An error when trying to delete the file " + fileName + " in Dstore " + port);
+            e.printStackTrace();
+        }
     }
 
     private void load(Socket client, String fileName) {
-
+        System.out.println("DStore " + port + " is loading the file " + fileName);
+        try {
+            try (FileInputStream reader = new FileInputStream(new File(fileFolder, fileName))) {
+                reader.transferTo(client.getOutputStream());
+            }
+            System.out.println("The file " + fileName + " has been transferred to the client " + client.getPort());
+        } catch (FileNotFoundException e) {
+            System.err.println("There was an error creating the FileInputStream because the " + fileName + " cannot be found in folder " + fileFolder);
+            e.printStackTrace();
+        } catch (IOException e) {
+            System.err.println("There was an error getting the OutputStream of the client " + client.getPort());
+            e.printStackTrace();
+        }
     }
 
     private void list(Socket client) {
-
+        System.out.println("Controller is asking for LIST");
+        var message = new StringBuilder(Protocol.LIST_TOKEN + " ");
+        if (Objects.requireNonNull(fileFolder.listFiles()).length == 0) {
+            try {
+                send(message.toString(), new Socket(InetAddress.getLoopbackAddress(), cport));
+            } catch (IOException e) {
+                System.err.println("There was an error sending the LIST EMPTY message to the controller");
+                e.printStackTrace();
+            }
+        } else {
+            Arrays.stream(Objects.requireNonNull(fileFolder.listFiles())).forEach(file -> {
+                message.append(file.getName()).append(" ");
+            });
+            synchronized (controllerOut) {
+                controllerOut.println(message);
+            }
+        }
     }
 
     private void rebalance(String[] message) {
