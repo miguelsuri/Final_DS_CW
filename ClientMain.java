@@ -24,10 +24,10 @@ public class ClientMain {
         if (!uploadFolder.exists())
             throw new RuntimeException("to_store folder does not exist");
 
-        testRemove(cport, timeout, downloadFolder, uploadFolder);
+//        testRemove(cport, timeout, downloadFolder, uploadFolder);
 
         // launch a single client
-//        testClient(cport, timeout, downloadFolder, uploadFolder);
+        testClient(cport, timeout, downloadFolder, uploadFolder);
 
         // launch a number of concurrent clients, each doing the same operations
 //        for (int i = 0; i < 10; i++) {

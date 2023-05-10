@@ -73,6 +73,7 @@ public class DstoreModel {
         if (dead) throw new DeadStoreException("Tried to send and receive but DStore is dead");
         synchronized(writer) {
             writer.println(message);
+            writer.flush();
         }
         return receive(expectedMessages);
     }

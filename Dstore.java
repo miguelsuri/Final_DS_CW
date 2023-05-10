@@ -84,15 +84,17 @@ public class Dstore {
 
     private void launchControllerThread() {
         new Thread(() -> {
-            try {
-                String message = controllerIn.readLine();
-                if(message != null) {
-                    messageReceived(cSocket, message);
-                    handleMessage(cSocket, message.split(" "));
+            while (true) {
+                try {
+                    String message = controllerIn.readLine();
+                    if(message != null) {
+                        messageReceived(cSocket, message);
+                        handleMessage(cSocket, message.split(" "));
+                    }
                 }
-            }
-            catch(Exception e) {
-                e.printStackTrace();
+                catch(Exception e) {
+                    e.printStackTrace();
+                }
             }
         }).start();
     }
