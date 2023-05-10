@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class Controller {
 
@@ -41,6 +42,7 @@ public class Controller {
 
             Controller controller = new Controller(cport, rFactor, timeout, rebalancePeriod);
             controller.listen();
+            controller.launchDeadStoreThread();
         } catch (IndexOutOfBoundsException e) {
             System.err.println("Command line arguments have not been provided correctly");
             return;
@@ -52,6 +54,36 @@ public class Controller {
             return;
         }
 
+    }
+
+    private void launchDeadStoreThread() {
+        new Thread(() -> {
+            while (true) {
+                synchronized (dstores) {
+                    AtomicReference<Integer> toDeleteInt = new AtomicReference<>(null);
+                    AtomicReference<DstoreModel> toDeleteMod = new AtomicReference<>(null);
+                    dstores.forEach((integer, dstoreModel) -> {
+                        if (dstoreModel.isDead()) {toDeleteInt.set(integer); toDeleteMod.set(dstoreModel);}
+                    });
+                    System.out.println("Deleting the Dstore " + toDeleteInt + " from the list of Dstores as it is dead");
+                    if (toDeleteInt.get() != null && toDeleteMod.get() != null) {
+                        dstores.remove(toDeleteInt, toDeleteMod);
+                        synchronized (indices) {
+                            indices.forEach((s, index) -> {
+                                if (index.getStoredByKeys().contains(toDeleteMod.get().getPort())) {
+                                    index.removeFromStoredBy(toDeleteMod.get().getPort());
+                                }
+                            });
+                        }
+                    }
+                }
+                try {
+                    Thread.sleep(timeout);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }).start();
     }
 
     private void listen() {
@@ -67,32 +99,9 @@ public class Controller {
 
                     new Thread(() -> {
                         if (splitMessage[0].equals(Protocol.JOIN_TOKEN)) {
-                            int dPort = Integer.parseInt(splitMessage[1]);
-                            System.out.println("Dstore has joined " + dPort);
-                            dstores.put(dPort, new DstoreModel(client, dPort, timeout));
+                            joinDstore(client, splitMessage);
                         } else {
-                            System.out.println("Client has connected");
-                            messageReceived(client, Arrays.toString(splitMessage));
-                            handleMessage(client, splitMessage);
-                            String clientMessage = "";
-                            do {
-                                try {
-                                    clientMessage = in.readLine();
-                                    messageReceived(client, clientMessage);
-                                    if (clientMessage != null) {
-                                        var splitClientMessage = clientMessage.split(" ");
-                                        handleMessage(client, splitClientMessage);
-                                    }
-                                } catch (IOException e) {
-                                    throw new RuntimeException(e);
-                                }
-                            } while (clientMessage != null);
-                            try {
-                                System.out.println("Closing the client " + client.getPort());
-                                in.close();
-                            } catch (IOException e) {
-                                throw new RuntimeException(e);
-                            }
+                            listenToClientMessages(client, splitMessage, in);
                         }
                     }).start();
                 }
@@ -100,6 +109,37 @@ public class Controller {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private void listenToClientMessages(Socket client, String[] splitMessage, BufferedReader in) {
+        System.out.println("Client has connected");
+        System.out.println("Message received: " + Arrays.toString(splitMessage) + " from: " + client);
+        handleMessage(client, splitMessage);
+        String clientMessage = "";
+        do {
+            try {
+                clientMessage = in.readLine();
+                System.out.println("Message received: " + Arrays.toString(splitMessage) + " from: " + client);
+                if (clientMessage != null) {
+                    var splitClientMessage = clientMessage.split(" ");
+                    handleMessage(client, splitClientMessage);
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        } while (clientMessage != null);
+        try {
+            System.out.println("Closing the client " + client.getPort());
+            in.close();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void joinDstore(Socket client, String[] splitMessage) {
+        int dPort = Integer.parseInt(splitMessage[1]);
+        System.out.println("Dstore has joined " + dPort);
+        dstores.put(dPort, new DstoreModel(client, dPort, timeout));
     }
 
     private void handleMessage(Socket client, String[] message) {
@@ -131,8 +171,8 @@ public class Controller {
         StringBuilder message = new StringBuilder(Protocol.LIST_TOKEN);
         synchronized (indices) {
             indices.forEach((name, dIndex) -> {
-                synchronized (dIndex.getStatus()) {
-                    System.out.println("LIST: File " + name + " has status " + dIndex.getStatus() + " and has " + dIndex.getStoreACKs() + " ACKs");
+                synchronized (dIndex) {
+                    System.out.println("LIST: File " + name + " has status " + dIndex.getStatus());
                     if (dIndex.getStatus() == Index.Status.STORE_COMPLETE) {
                         System.out.println("FIle " + dIndex.getFilename() + " being put into LIST");
                         message.append(" ").append(dIndex.getFilename());
@@ -248,6 +288,22 @@ public class Controller {
         }
 
         CountDownLatch latch = new CountDownLatch(storedBy.size());
+        waitForRemoveACKs(storedBy, fileName, index, latch);
+
+        try {
+            System.out.println("Checking that latch has finished");
+            if (latch.await(timeout, TimeUnit.MILLISECONDS)) {
+                index.setStatus(Index.Status.REMOVE_COMPLETE);
+                indices.remove(fileName, index);
+                send(Protocol.REMOVE_COMPLETE_TOKEN, client);
+            }
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+            System.err.println("Timed out waiting for remove ACKs");
+        }
+    }
+
+    private void waitForRemoveACKs(ArrayList<Integer> storedBy, String fileName, Index index, CountDownLatch latch) {
         storedBy.forEach(integer -> {
             new Thread(() -> {
                 try {
@@ -265,18 +321,6 @@ public class Controller {
                 }
             }).start();
         });
-
-        try {
-            System.out.println("Checking that latch has finished");
-            if (latch.await(timeout, TimeUnit.MILLISECONDS)) {
-                index.setStatus(Index.Status.REMOVE_COMPLETE);
-                indices.remove(fileName, index);
-                send(Protocol.REMOVE_COMPLETE_TOKEN, client);
-            }
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-            System.err.println("Timed out waiting for remove ACKs");
-        }
     }
 
     private void waitForStoreACKs(Index dIndex, ArrayList<DstoreModel> selectedDstores, CountDownLatch latch) {
@@ -286,9 +330,7 @@ public class Controller {
                     String receivedMessage = dstores.get(dstoreModel.getPort()).receive(Protocol.STORE_ACK_TOKEN + " " + dIndex.getFilename());
                     if (receivedMessage != null) {
                         try {
-                            System.out.println("Increasing store ACK count of " + dIndex.getFilename() + " from " + dIndex.getStoreACKs() + " to " + (dIndex.getStoreACKs() + 1));
                             dIndex.getStoredBy().put(dstoreModel.getPort(), dstoreModel.getSocket());
-                            dIndex.setStoreACKs(dIndex.getStoreACKs() + 1);
                             latch.countDown();
                         } catch (Exception e) {
                             //Log error
@@ -365,11 +407,6 @@ public class Controller {
             }
         }
         return dStores;
-    }
-
-
-    private void messageReceived(Socket client, String message) {
-        System.out.println("Message received: " + message + " from " + client);
     }
 
     private void send(String message, Socket socket) {

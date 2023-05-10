@@ -9,8 +9,7 @@ public class Index {
     private long filesize;
     private Map<Integer, Socket> storedBy = new HashMap<>();
     private Status status;
-    private int storeACKs;
-    private int removeACKs;
+
 
     public static enum Status {
         STORE_IN_PROGRESS,
@@ -23,7 +22,6 @@ public class Index {
         this.status = Status.STORE_IN_PROGRESS;
         this.filesize = filesize;
         this.filename = filename;
-        this.storeACKs = 0;
     }
 
     public long getFilesize() {
@@ -77,21 +75,4 @@ public class Index {
     public void setFilename(String filename) {
         this.filename = filename;
     }
-
-    public int getStoreACKs() {
-        return storeACKs;
-    }
-
-    public void setStoreACKs(int storeACKs) {
-        this.storeACKs = storeACKs;
-    }
-
-    public int getRemoveACKs() {
-        return removeACKs;
-    }
-
-    public void setRemoveACKs(int removeACKs) {
-        this.removeACKs = removeACKs;
-    }
-
 }

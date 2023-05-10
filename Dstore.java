@@ -69,7 +69,7 @@ public class Dstore {
                     Socket client = server.accept();
                     BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
                     String message = in.readLine();
-                    messageReceived(client, message);
+                    System.out.println("Message received: " + message + " from: " + client);
                     handleMessage(client, message.split(" "));
                 }
                 catch(Exception e) {
@@ -88,7 +88,7 @@ public class Dstore {
                 try {
                     String message = controllerIn.readLine();
                     if(message != null) {
-                        messageReceived(cSocket, message);
+                        System.out.println("Message received: " + message + " from: " + cSocket);
                         handleMessage(cSocket, message.split(" "));
                     }
                 }
@@ -162,50 +162,23 @@ public class Dstore {
     private void remove(Socket client, String fileName) {
         System.out.println("Remove of " + fileName + " has been requested by Controller");
         try {
-            System.out.println("Store " + port + " removing " + fileName + "...");
-            //Remove the file from fileFolder
-            Path path = new File(fileFolder, fileName).toPath();
-
-            String controllerMessage;
-            if(Files.deleteIfExists(path)) {
-                System.out.println("Store " + port + " removed " + fileName);
-                //Send REMOVE_ACK message to client (the controller)
+            Path filePath = new File(fileFolder, fileName).toPath();
+            System.out.println("File " + filePath + " was found, attempting to remove it");
+            if (filePath.toFile().delete()) {
+                System.out.println("Deleted the file: " + filePath);
+                synchronized (controllerOut) {
+                    controllerOut.println(Protocol.REMOVE_ACK_TOKEN + " " + fileName);
+                }
+            } else {
+                System.out.println("Failed to delete the file " + fileName);
                 synchronized(controllerOut) {
-                    controllerMessage = Protocol.REMOVE_ACK_TOKEN + " " + fileName;
+                    controllerOut.println(Protocol.ERROR_FILE_DOES_NOT_EXIST_TOKEN + " " + fileName);
                 }
             }
-            else {
-                System.out.println("Store " + port + " couldn't remove " + fileName);
-                //Send DOES NOT EXIST error
-                synchronized(controllerOut) {
-                    controllerMessage = Protocol.ERROR_FILE_DOES_NOT_EXIST_TOKEN + " " + fileName;
-                }
-            }
-            controllerOut.println(controllerMessage);
-        }
-        catch(IOException e) {
+        } catch (Exception e) {
+            System.err.println("An error when trying to delete the file " + fileName + " in Dstore " + port);
             e.printStackTrace();
         }
-
-//        System.out.println("Remove of " + fileName + " has been requested by Controller");
-//        try {
-//            Path filePath = new File(fileFolder, fileName).toPath();
-//            System.out.println("File " + filePath + " was found, attempting to remove it");
-//            if (filePath.toFile().delete()) {
-//                System.out.println("Deleted the file: " + filePath);
-//                synchronized (controllerOut) {
-//                    controllerOut.println(Protocol.REMOVE_ACK_TOKEN + " " + fileName);
-//                }
-//            } else {
-//                System.out.println("Failed to delete the file " + fileName);
-//                synchronized(controllerOut) {
-//                    controllerOut.println(Protocol.ERROR_FILE_DOES_NOT_EXIST_TOKEN + " " + fileName);
-//                }
-//            }
-//        } catch (Exception e) {
-//            System.err.println("An error when trying to delete the file " + fileName + " in Dstore " + port);
-//            e.printStackTrace();
-//        }
     }
 
     private void load(Socket client, String fileName) {
@@ -262,10 +235,6 @@ public class Dstore {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
-    }
-
-    private void messageReceived(Socket client, String message) {
-        System.out.println("Message received: " + message + " from " + client);
     }
 
     private void send(String message, Socket socket) {

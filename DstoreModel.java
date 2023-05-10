@@ -4,6 +4,7 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class DstoreModel {
@@ -38,14 +39,11 @@ public class DstoreModel {
             String message = null;
             try {
                 message = reader.readLine();
-                messageReceived(socket, message);
-
+                System.out.println("Message received: " + message + " from: " + socket);
                 if(message == null) {
-                    //Disconnect
+                    System.out.println("DSTORE DIED");
                     dead = true;
-//                    remover.removeDstore(port, socket);
-                }
-                else {
+                } else {
                     messageQueue.add(message);
                 }
             } catch (IOException e) {
@@ -93,11 +91,6 @@ public class DstoreModel {
             messageQueue.stream().filter(s -> s.equals(expectedMessages)).findFirst().ifPresent(returnVal::set);
         }
         return returnVal.get();
-    }
-
-
-    private void messageReceived(Socket client, String message) {
-        System.out.println("DSTORE_MODEL: Message received: " + message + " from " + client);
     }
 
     public Socket getSocket() {

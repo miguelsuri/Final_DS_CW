@@ -5,17 +5,17 @@
     <content url="file://$MODULE_DIR$">
       <sourceFolder url="file://$MODULE_DIR$" isTestSource="false" />
     </content>
+    <content url="jar://$USER_HOME$/Downloads/comp2207-2223-client-1.0.0/client.jar!/" />
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
-    <orderEntry type="module-library" exported="" scope="PROVIDED">
+    <orderEntry type="module-library" exported="">
       <library>
         <CLASSES>
-          <root url="jar://$USER_HOME$/Downloads/comp2207-2223-client-1.0.0/client.jar!/" />
+          <root url="jar://$MODULE_DIR$/client.jar!/" />
         </CLASSES>
         <JAVADOC />
         <SOURCES />
       </library>
     </orderEntry>
-    <orderEntry type="library" name="client" level="project" />
   </component>
 </module>
