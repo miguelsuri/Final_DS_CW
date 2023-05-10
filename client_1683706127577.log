@@ -1,0 +1,49 @@
+Connection established to port 12345
+Message sent to port 12345: LIST
+List operation started
+Message received from port 12345: LIST
+List operation successfully completed
+Message sent to port 12345: STORE test2.txt 14
+Store operation started for file test2.txt
+Message received from port 12345: STORE_TO 54321
+Controller replied to store test2.txt in these Dstores: 54321 
+Connection established to port 54321
+Message sent to port 54321: STORE test2.txt 14
+Storing file test2.txt to Dstore 54321
+Message received from port 54321: ACK
+ACK received from Dstore 54321 to store file test2.txt
+Store of file test2.txt to Dstore 54321 successfully completed
+Message received from port 12345: STORE_COMPLETE
+Store operation for file test2.txt completed
+Message sent to port 12345: STORE file1.txt 16
+Store operation started for file file1.txt
+Message received from port 12345: STORE_TO 54321
+Controller replied to store file1.txt in these Dstores: 54321 
+Connection established to port 54321
+Message sent to port 54321: STORE file1.txt 16
+Storing file file1.txt to Dstore 54321
+Message received from port 54321: ACK
+ACK received from Dstore 54321 to store file file1.txt
+Store of file file1.txt to Dstore 54321 successfully completed
+Message received from port 12345: STORE_COMPLETE
+Store operation for file file1.txt completed
+Message sent to port 12345: LIST
+List operation started
+Message received from port 12345: LIST file1.txt test2.txt
+List operation successfully completed
+Message sent to port 12345: REMOVE file1.txt
+Remove operation for file file1.txt started
+Message received from port 12345: REMOVE_COMPLETE
+Remove operation for file file1.txt successfully completed
+Message sent to port 12345: REMOVE test2.txt
+Remove operation for file test2.txt started
+Timeout expired while reading from port 12345
+Remove operation for file test2.txt not completed successfully
+Message sent to port 12345: REMOVE file1.txt
+Remove operation for file file1.txt started
+Timeout expired while reading from port 12345
+Remove operation for file file1.txt not completed successfully
+Message sent to port 12345: LIST
+List operation started
+Timeout expired while reading from port 12345
+List operation failed

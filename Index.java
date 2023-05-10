@@ -58,6 +58,10 @@ public class Index {
         return x;
     }
 
+    public void removeFromStoredBy(Integer dstore) {
+        storedBy.remove(dstore);
+    }
+
     public Status getStatus() {
         return status;
     }

@@ -114,7 +114,7 @@ public class Controller {
             case Protocol.STORE_TOKEN -> store(client, message[1], message[2]);
             case Protocol.LOAD_TOKEN -> load(client, message[1]);
             case Protocol.RELOAD_TOKEN -> reload(client, message[1]);
-//            case Protocol.REMOVE_TOKEN -> remove(client, message[1]);
+            case Protocol.REMOVE_TOKEN -> remove(client, message[1]);
             default -> System.out.println("Malformed message received " + Arrays.toString(message));
         }
     }
@@ -233,6 +233,51 @@ public class Controller {
         }
     }
 
+    private void remove(Socket client, String fileName) {
+        System.out.println("Removing the file " + fileName);
+        Index index;
+        ArrayList<Integer> storedBy;
+
+        synchronized (indices) {
+            index = indices.get(fileName);
+            if (index == null || index.getStatus() != Index.Status.STORE_COMPLETE) {
+                send(Protocol.ERROR_FILE_DOES_NOT_EXIST_TOKEN, client);
+                return;
+            }
+            storedBy = index.getStoredByKeys();
+        }
+
+        CountDownLatch latch = new CountDownLatch(storedBy.size());
+        storedBy.forEach(integer -> {
+            new Thread(() -> {
+                try {
+                    var toSend = Protocol.REMOVE_TOKEN + " " + fileName;
+                    var expected = Protocol.REMOVE_ACK_TOKEN + " " + fileName;
+                    String message = dstores.get(integer).sendAndWaitForResponse(toSend, expected);
+                    System.out.println("REMOVE: Message received: " + message);
+                    if (message != null) {
+                        System.out.println("REMOVE LATCH COUNTING DOWN FOR " + fileName);
+                        index.removeFromStoredBy(integer);
+                        latch.countDown();
+                    }
+                } catch (DeadStoreException e) {
+                    throw new RuntimeException(e);
+                }
+            }).start();
+        });
+
+        try {
+            System.out.println("Checking that latch has finished");
+            if (latch.await(timeout, TimeUnit.MILLISECONDS)) {
+                index.setStatus(Index.Status.REMOVE_COMPLETE);
+                indices.remove(fileName, index);
+                send(Protocol.REMOVE_COMPLETE_TOKEN, client);
+            }
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+            System.err.println("Timed out waiting for remove ACKs");
+        }
+    }
 
     private void waitForStoreACKs(Index dIndex, ArrayList<DstoreModel> selectedDstores, CountDownLatch latch) {
         for (DstoreModel dstoreModel : selectedDstores) {
@@ -254,7 +299,7 @@ public class Controller {
                         //Log error
                         System.err.println("Dstore " + dstoreModel.getPort() + " timed out receiving STORE_ACK for " + dIndex.getFilename());
                     }
-                } catch (DeadStore e) {
+                } catch (DeadStoreException e) {
                     System.err.println("Store for " + dIndex.getFilename() + " failed due to dead dstore");
                 }
             }).start();

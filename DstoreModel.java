@@ -3,11 +3,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.Queue;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class DstoreModel {
 
@@ -57,30 +54,44 @@ public class DstoreModel {
         }
     }
 
-    public String receive(String expectedMessages) throws DeadStore {
+    public String receive(String expectedMessages) throws DeadStoreException {
         if (!dead) {
             String receivedMessage = null;
             var start = System.currentTimeMillis();
             var end = start + timeout;
             while(receivedMessage == null && System.currentTimeMillis() < end) {
                 receivedMessage = getMessageFromQueue(expectedMessages);
-                if (dead) {throw new DeadStore(String.valueOf(this.getPort()));}
+                if (dead) {throw new DeadStoreException(String.valueOf(this.getPort()));}
             }
             return receivedMessage;
         } else {
-            throw new DeadStore(String.valueOf(this.getPort()));
+            throw new DeadStoreException(String.valueOf(this.getPort()));
         }
     }
 
-    private String getMessageFromQueue(String expectedMessages) {
-        synchronized (messageQueue) {
-            for (String message : getMessageQueue()) {
-                if (message.equals(expectedMessages)) {
-                    return message;
-                }
-            }
+    public String sendAndWaitForResponse(String message, String expectedMessages) throws DeadStoreException {
+        if (dead) throw new DeadStoreException("Tried to send and receive but DStore is dead");
+        synchronized(writer) {
+            writer.println(message);
         }
-        return null;
+        return receive(expectedMessages);
+    }
+
+
+//    public String sendAndWaitForResponse(String toSend, String expected) throws DeadStore {
+//        if (dead) throw new DeadStore("Tried to send and receive but DStore is dead");
+//        synchronized (writer) {
+//            writer.println(toSend);
+//        }
+//        return receive(expected);
+//    }
+
+    private String getMessageFromQueue(String expectedMessages) {
+        AtomicReference<String> returnVal = new AtomicReference<>(null);
+        synchronized (messageQueue) {
+            messageQueue.stream().filter(s -> s.equals(expectedMessages)).findFirst().ifPresent(returnVal::set);
+        }
+        return returnVal.get();
     }
 
 

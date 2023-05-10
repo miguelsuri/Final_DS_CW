@@ -2,6 +2,7 @@ import java.io.*;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Objects;
@@ -157,49 +158,52 @@ public class Dstore {
     }
 
     private void remove(Socket client, String fileName) {
-//        try {
-//            System.out.println("Store " + port + " removing " + filename + "...");
-//            //Remove the file from fileFolder
-//            Path path = new File(fileFolder, filename).toPath();
-//
-//            String controllerMessage;
-//            if(Files.deleteIfExists(path)) {
-//                System.out.println("Store " + port + " removed " + filename);
-//                //Send REMOVE_ACK message to client (the controller)
-//                synchronized(controllerOut) {
-//                    controllerMessage = Protocol.REMOVE_ACK_TOKEN + " " + filename;
-//                }
-//            }
-//            else {
-//                System.out.println("Store " + port + " couldn't remove " + filename);
-//                //Send DOES NOT EXIST error
-//                synchronized(controllerOut) {
-//                    controllerMessage = Protocol.ERROR_FILE_DOES_NOT_EXIST_TOKEN + " " + filename;
-//                }
-//            }
-//            controllerOut.println(controllerMessage);
-//            messageSent(controllerSocket, controllerMessage);
-//        }
-//        catch(IOException e) {
-//            e.printStackTrace();
-//        }
-
         System.out.println("Remove of " + fileName + " has been requested by Controller");
         try {
-            Path filePath = new File(fileFolder, fileName).toPath();
-            System.out.println("File " + filePath + " was found, attempting to remove it");
-            if (filePath.toFile().delete()) {
-                System.out.println("Deleted the file: " + filePath);
-                synchronized (controllerOut) {
-                    controllerOut.println(Protocol.REMOVE_ACK_TOKEN + " " + fileName);
+            System.out.println("Store " + port + " removing " + fileName + "...");
+            //Remove the file from fileFolder
+            Path path = new File(fileFolder, fileName).toPath();
+
+            String controllerMessage;
+            if(Files.deleteIfExists(path)) {
+                System.out.println("Store " + port + " removed " + fileName);
+                //Send REMOVE_ACK message to client (the controller)
+                synchronized(controllerOut) {
+                    controllerMessage = Protocol.REMOVE_ACK_TOKEN + " " + fileName;
                 }
-            } else {
-                System.out.println("Failed to delete the file " + fileName);
             }
-        } catch (Exception e) {
-            System.err.println("An error when trying to delete the file " + fileName + " in Dstore " + port);
+            else {
+                System.out.println("Store " + port + " couldn't remove " + fileName);
+                //Send DOES NOT EXIST error
+                synchronized(controllerOut) {
+                    controllerMessage = Protocol.ERROR_FILE_DOES_NOT_EXIST_TOKEN + " " + fileName;
+                }
+            }
+            controllerOut.println(controllerMessage);
+        }
+        catch(IOException e) {
             e.printStackTrace();
         }
+
+//        System.out.println("Remove of " + fileName + " has been requested by Controller");
+//        try {
+//            Path filePath = new File(fileFolder, fileName).toPath();
+//            System.out.println("File " + filePath + " was found, attempting to remove it");
+//            if (filePath.toFile().delete()) {
+//                System.out.println("Deleted the file: " + filePath);
+//                synchronized (controllerOut) {
+//                    controllerOut.println(Protocol.REMOVE_ACK_TOKEN + " " + fileName);
+//                }
+//            } else {
+//                System.out.println("Failed to delete the file " + fileName);
+//                synchronized(controllerOut) {
+//                    controllerOut.println(Protocol.ERROR_FILE_DOES_NOT_EXIST_TOKEN + " " + fileName);
+//                }
+//            }
+//        } catch (Exception e) {
+//            System.err.println("An error when trying to delete the file " + fileName + " in Dstore " + port);
+//            e.printStackTrace();
+//        }
     }
 
     private void load(Socket client, String fileName) {
@@ -207,6 +211,9 @@ public class Dstore {
         try {
             try (FileInputStream reader = new FileInputStream(new File(fileFolder, fileName))) {
                 reader.transferTo(client.getOutputStream());
+            } catch (FileNotFoundException e) {
+                System.out.println("There was no file " + fileName + " inside the dstore");
+                e.printStackTrace();
             }
             System.out.println("The file " + fileName + " has been transferred to the client " + client.getPort());
         } catch (FileNotFoundException e) {
