@@ -44,7 +44,9 @@ public class DstoreModel {
                     System.out.println("DSTORE DIED");
                     dead = true;
                 } else {
-                    messageQueue.add(message);
+                    synchronized (messageQueue) {
+                        messageQueue.add(message);
+                    }
                 }
             } catch (IOException e) {
                 throw new RuntimeException(e);
@@ -89,6 +91,7 @@ public class DstoreModel {
         AtomicReference<String> returnVal = new AtomicReference<>(null);
         synchronized (messageQueue) {
             messageQueue.stream().filter(s -> s.equals(expectedMessages)).findFirst().ifPresent(returnVal::set);
+            messageQueue.remove(returnVal.get());
         }
         return returnVal.get();
     }

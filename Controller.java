@@ -5,6 +5,7 @@ import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -19,18 +20,20 @@ public class Controller {
     private int timeout;
     private int rebalance;
 
-    private final Map<Socket, Integer> reloadTries;
-    protected final Map<Integer, DstoreModel> dstores;
-    protected final Map<String, Index> indices;
+    private final Map<Socket, Integer> reloadTries = new ConcurrentHashMap<>();
+    protected final Map<Integer, DstoreModel> dstores = new ConcurrentHashMap<>();
+    protected final Map<String, Index> indices = new ConcurrentHashMap<>();
+//    protected final Rebalancer rebalancer;
 
     public Controller(int cport, int replication, int timeout, int rebalance) {
         this.cport = cport;
         this.replication = replication;
         this.timeout = timeout;
         this.rebalance = rebalance;
-        dstores = Collections.synchronizedMap(new HashMap<>());
-        indices = Collections.synchronizedMap(new HashMap<>());
-        reloadTries = Collections.synchronizedMap(new HashMap<>());
+//        dstores = Collections.synchronizedMap(new HashMap<>());
+//        indices = Collections.synchronizedMap(new HashMap<>());
+//        reloadTries = Collections.synchronizedMap(new HashMap<>());
+//        rebalancer = new Rebalancer(rebalance, this);
     }
 
     public static void main(String[] args) {
@@ -119,7 +122,6 @@ public class Controller {
         do {
             try {
                 clientMessage = in.readLine();
-                System.out.println("Message received: " + Arrays.toString(splitMessage) + " from: " + client);
                 if (clientMessage != null) {
                     var splitClientMessage = clientMessage.split(" ");
                     handleMessage(client, splitClientMessage);
@@ -140,9 +142,11 @@ public class Controller {
         int dPort = Integer.parseInt(splitMessage[1]);
         System.out.println("Dstore has joined " + dPort);
         dstores.put(dPort, new DstoreModel(client, dPort, timeout));
+//        rebalancer.startRebalanceOperation();
     }
 
     private void handleMessage(Socket client, String[] message) {
+        System.out.println("Message received: " + Arrays.toString(message) + " from: " + client);
         if (dstores.size() < replication) {
             send(Protocol.ERROR_NOT_ENOUGH_DSTORES_TOKEN, client);
             System.out.println("Not enought Dstores to remove files");
@@ -222,6 +226,7 @@ public class Controller {
     }
 
     private void load(Socket client, String fileName) {
+        System.out.println("Loading the file " + fileName);
         synchronized (reloadTries) {
             int tries;
             if (reloadTries.containsKey(client)) {
@@ -235,21 +240,24 @@ public class Controller {
             System.out.println("Looking for " + fileName + " in our server...");
             AtomicBoolean errorLoad = new AtomicBoolean(false);
             AtomicBoolean breakPoint = new AtomicBoolean(false);
-            indices.forEach((indexName, dIndex) -> {
-                if (breakPoint.get()) {
-                    return;
-                }
-                if (indexName.equals(fileName) && dIndex.getStoredByKeys().size() > tries) {
-                    Integer port = dIndex.getStoredByKeys().get(tries);
-                    System.out.println("Found the file " + fileName + " it is stored by " + port + " and has fileSize " + dIndex.getFilesize());
-                    dPort.set(port);
-                    fileSize.set(dIndex.getFilesize());
-                    breakPoint.set(true);
-                    errorLoad.set(false);
-                } else {
-                    errorLoad.set(true);
-                }
-            });
+            synchronized (indices) {
+                indices.forEach((indexName, dIndex) -> {
+                    if (breakPoint.get()) {
+                        return;
+                    }
+                    if (indexName.equals(fileName) && dIndex.getStoredByKeys().size() > tries) {
+                        Integer port = dIndex.getStoredByKeys().get(tries);
+                        System.out.println("Found the file " + fileName + " it is stored by " + port + " and has fileSize " + dIndex.getFilesize());
+                        dPort.set(port);
+                        fileSize.set(dIndex.getFilesize());
+                        breakPoint.set(true);
+                        errorLoad.set(false);
+                    } else {
+                        errorLoad.set(true);
+                    }
+                });
+            }
+
             if (!errorLoad.get()) {
                 if (dPort.get() < 0 || fileSize.get() < 0) {
                     System.out.println("Informing the client that the file " + fileName + " was not found");
@@ -260,7 +268,9 @@ public class Controller {
                 }
             } else {
                 send(Protocol.ERROR_LOAD_TOKEN, client);
-                reloadTries.remove(client);
+                synchronized (reloadTries) {
+                    reloadTries.remove(client);
+                }
             }
         }
     }
@@ -293,9 +303,11 @@ public class Controller {
         try {
             System.out.println("Checking that latch has finished");
             if (latch.await(timeout, TimeUnit.MILLISECONDS)) {
-                index.setStatus(Index.Status.REMOVE_COMPLETE);
-                indices.remove(fileName, index);
-                send(Protocol.REMOVE_COMPLETE_TOKEN, client);
+                synchronized (indices) {
+                    index.setStatus(Index.Status.REMOVE_COMPLETE);
+                    indices.remove(fileName, index);
+                    send(Protocol.REMOVE_COMPLETE_TOKEN, client);
+                }
             }
         } catch (InterruptedException e) {
             e.printStackTrace();
@@ -313,8 +325,12 @@ public class Controller {
                     System.out.println("REMOVE: Message received: " + message);
                     if (message != null) {
                         System.out.println("REMOVE LATCH COUNTING DOWN FOR " + fileName);
-                        index.removeFromStoredBy(integer);
+                        synchronized (index) {
+                            index.removeFromStoredBy(integer);
+                        }
                         latch.countDown();
+                    } else {
+                        System.out.println("Was expecting REMOVE ACK but got: null");
                     }
                 } catch (DeadStoreException e) {
                     throw new RuntimeException(e);
@@ -409,7 +425,7 @@ public class Controller {
         return dStores;
     }
 
-    private void send(String message, Socket socket) {
+    private synchronized void send(String message, Socket socket) {
         try {
             PrintWriter socketWriter = new PrintWriter(socket.getOutputStream());
             socketWriter.print(message);
