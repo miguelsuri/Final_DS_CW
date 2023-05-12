@@ -9,10 +9,10 @@ import java.util.Objects;
 
 public class Dstore {
 
-    private int port; // The port the Dstore listens to
-    private int cport; // The controllers port
+    private final int port; // The port the Dstore listens to
+    private final int cport; // The controllers port
     private int timeout; // Timeout in millisecondsF
-    private File fileFolder; // Where to store the data locally
+    private final File fileFolder; // Where to store the data locally
     private Long amountStored;
     private Socket cSocket;
     protected BufferedReader controllerIn;
@@ -57,25 +57,24 @@ public class Dstore {
 
     public void listen() {
         joinDstore();
-        launchControllerThread();
+        new Thread(this::launchControllerThread).start();
         launchClientMessageHandler();
     }
 
     private void launchClientMessageHandler() {
-        try {
-            ServerSocket server = new ServerSocket(port);
-            while(true) {
-                try {
-                    Socket client = server.accept();
-                    BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
-                    String message = in.readLine();
-                    System.out.println("Message received: " + message + " from: " + client);
-                    handleMessage(client, message.split(" "));
-                }
-                catch(Exception e) {
-                    //Log error
-                    e.printStackTrace();
-                }
+        try (ServerSocket server = new ServerSocket(port)) {
+            while (true) {
+                Socket client = server.accept();
+                new Thread(() -> {
+                    try {
+                        BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
+                        String message = in.readLine();
+                        System.out.println("Message received: " + message + " from: " + client);
+                        handleMessage(client, message.split(" "));
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }).start();
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -83,20 +82,17 @@ public class Dstore {
     }
 
     private void launchControllerThread() {
-        new Thread(() -> {
-            while (true) {
-                try {
-                    String message = controllerIn.readLine();
-                    if(message != null) {
-                        System.out.println("Message received: " + message + " from: " + cSocket);
-                        handleMessage(cSocket, message.split(" "));
-                    }
+        while (true) {
+            try {
+                String message = controllerIn.readLine();
+                if (message != null) {
+                    System.out.println("Message received: " + message + " from: " + cSocket);
+                    handleMessage(cSocket, message.split(" "));
                 }
-                catch(Exception e) {
-                    e.printStackTrace();
-                }
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-        }).start();
+        }
     }
 
     private void handleMessage(Socket client, String[] message) {
@@ -140,7 +136,9 @@ public class Dstore {
             System.out.println("File " + fileName + " is stored in folder " + fileFolder);
 
             // Send a message to the Controller to notify the file has been stored
-            if (isRebalance) {return;}
+            if (isRebalance) {
+                return;
+            }
             System.out.println("Sending ACK to controller");
             send(Protocol.ACK_TOKEN, client);
 //        send(Protocol.STORE_ACK_TOKEN + " " + fileName, cSocket);
@@ -153,7 +151,7 @@ public class Dstore {
         } finally {
             try {
                 client.close();
-            } catch(IOException e) {
+            } catch (IOException e) {
                 e.printStackTrace();
             }
         }
@@ -171,7 +169,7 @@ public class Dstore {
                 }
             } else {
                 System.out.println("Failed to delete the file " + fileName);
-                synchronized(controllerOut) {
+                synchronized (controllerOut) {
                     controllerOut.println(Protocol.ERROR_FILE_DOES_NOT_EXIST_TOKEN + " " + fileName);
                 }
             }

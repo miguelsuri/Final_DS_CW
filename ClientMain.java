@@ -1,5 +1,6 @@
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Random;
 
 /**
@@ -27,20 +28,20 @@ public class ClientMain {
 //        testRemove(cport, timeout, downloadFolder, uploadFolder);
 
         // launch a single client
-        Client client = null;
-        client = new Client(cport, timeout, Logger.LoggingType.ON_FILE_AND_TERMINAL);
-        try { client.connect(); } catch(IOException e) { e.printStackTrace(); return; }
-
-        testClient(cport, timeout, downloadFolder, uploadFolder);
+//        Client client = null;
+//        client = new Client(cport, timeout, Logger.LoggingType.ON_FILE_AND_TERMINAL);
+//        try { client.connect(); } catch(IOException e) { e.printStackTrace(); return; }
+//
+//        testClient(cport, timeout, downloadFolder, uploadFolder);
 
         // launch a number of concurrent clients, each doing the same operations
-//        for (int i = 0; i < 10; i++) {
-//            new Thread() {
-//                public void run() {
-//                    test2Client(cport, timeout, downloadFolder, uploadFolder);
-//                }
-//            }.start();
-//        }
+        for (int i = 0; i < 10; i++) {
+            new Thread() {
+                public void run() {
+                    test2Client(cport, timeout, downloadFolder, uploadFolder);
+                }
+            }.start();
+        }
 
 //        testClient1(cport, timeout, downloadFolder, uploadFolder);
     }
@@ -91,11 +92,10 @@ public class ClientMain {
         try {
             client = new Client(cport, timeout, Logger.LoggingType.ON_FILE_AND_TERMINAL);
             client.connect();
-            Random random = new Random(System.currentTimeMillis() * System.nanoTime());
 
             File fileList[] = uploadFolder.listFiles();
-            for (int i=0; i<fileList.length/2; i++) {
-                File fileToStore = fileList[random.nextInt(fileList.length)];
+            for (int i=0; i<fileList.length; i++) {
+                File fileToStore = fileList[fileList.length - 1];
                 try {
                     client.store(fileToStore);
                 } catch (Exception e) {
@@ -104,11 +104,10 @@ public class ClientMain {
                 }
             }
 
-            String list[] = null;
-            try { list = list(client); } catch(IOException e) { e.printStackTrace(); }
+            System.out.println("-=-=-=-=-=-=-=-=-=-");
 
-            for (int i = 0; i < list.length/4; i++) {
-                String fileToRemove = list[random.nextInt(list.length)];
+            for (int i = 0; i < fileList.length; i++) {
+                String fileToRemove = fileList[fileList.length - 1].getName();
                 try {
                     client.remove(fileToRemove);
                 } catch (Exception e) {
@@ -116,9 +115,6 @@ public class ClientMain {
                     e.printStackTrace();
                 }
             }
-
-            try { list = list(client); } catch(IOException e) { e.printStackTrace(); }
-
         } catch(IOException e) {
             e.printStackTrace();
         } finally {

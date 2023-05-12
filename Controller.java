@@ -15,10 +15,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class Controller {
 
-    private int cport;
-    private int replication;
-    private int timeout;
-    private int rebalance;
+    private final int cport;
+    private final int replication;
+    private final int timeout;
+    private final int rebalance;
 
     private final Map<Socket, Integer> reloadTries = new ConcurrentHashMap<>();
     protected final Map<Integer, DstoreModel> dstores = new ConcurrentHashMap<>();
@@ -44,97 +44,126 @@ public class Controller {
             int rebalancePeriod = Integer.parseInt(args[3]);
 
             Controller controller = new Controller(cport, rFactor, timeout, rebalancePeriod);
+            new Thread(controller::launchDeadStoreThread).start();
             controller.listen();
-            controller.launchDeadStoreThread();
         } catch (IndexOutOfBoundsException e) {
             System.err.println("Command line arguments have not been provided correctly");
-            return;
+            e.printStackTrace();
         } catch (NumberFormatException e) {
             System.err.println("Command line arguments must be integers");
-            return;
+            e.printStackTrace();
         } catch (Exception e) {
             e.printStackTrace();
-            return;
+            e.printStackTrace();
         }
 
     }
 
+//    private void launchDeadStoreThread() {
+//        while (true) {
+//            synchronized (dstores) {
+//                AtomicReference<Integer> toDeleteInt = new AtomicReference<>(null);
+//                AtomicReference<DstoreModel> toDeleteMod = new AtomicReference<>(null);
+//                dstores.forEach((integer, dstoreModel) -> {
+//                    if (dstoreModel.isDead()) {
+//                        toDeleteInt.set(integer);
+//                        toDeleteMod.set(dstoreModel);
+//                    }
+//                });
+//                if (toDeleteInt.get() != null && toDeleteMod.get() != null) {
+//                    System.out.println("Deleting the Dstore " + toDeleteInt + " from the list of Dstores as it is dead");
+//                    dstores.remove(toDeleteInt, toDeleteMod);
+//                    synchronized (indices) {
+//                        indices.forEach((s, index) -> {
+//                            if (index.getStoredByKeys().contains(toDeleteMod.get().getPort())) {
+//                                index.removeFromStoredBy(toDeleteMod.get().getPort());
+//                            }
+//                        });
+//                    }
+//                }
+//            }
+//            try {
+//                Thread.sleep(1000); // Sleep for 1 second before the next iteration
+//            } catch (InterruptedException e) {
+//                // Handle any exceptions that may occur during sleep
+//                e.printStackTrace();
+//            }
+//        }
+//    }
+
     private void launchDeadStoreThread() {
-        new Thread(() -> {
-            while (true) {
-                synchronized (dstores) {
-                    AtomicReference<Integer> toDeleteInt = new AtomicReference<>(null);
-                    AtomicReference<DstoreModel> toDeleteMod = new AtomicReference<>(null);
-                    dstores.forEach((integer, dstoreModel) -> {
-                        if (dstoreModel.isDead()) {toDeleteInt.set(integer); toDeleteMod.set(dstoreModel);}
-                    });
-                    System.out.println("Deleting the Dstore " + toDeleteInt + " from the list of Dstores as it is dead");
-                    if (toDeleteInt.get() != null && toDeleteMod.get() != null) {
-                        dstores.remove(toDeleteInt, toDeleteMod);
+        while (true) {
+            synchronized (dstores) {
+                Iterator<Map.Entry<Integer, DstoreModel>> iterator = dstores.entrySet().iterator();
+                while (iterator.hasNext()) {
+                    Map.Entry<Integer, DstoreModel> entry = iterator.next();
+                    Integer key = entry.getKey();
+                    DstoreModel dstoreModel = entry.getValue();
+                    if (dstoreModel.isDead()) {
+                        System.out.println("Deleting the Dstore " + key + " from the list of Dstores as it is dead");
+                        iterator.remove(); // Remove the DstoreModel using the iterator
                         synchronized (indices) {
                             indices.forEach((s, index) -> {
-                                if (index.getStoredByKeys().contains(toDeleteMod.get().getPort())) {
-                                    index.removeFromStoredBy(toDeleteMod.get().getPort());
+                                if (index.getStoredByKeys().contains(dstoreModel.getPort())) {
+                                    index.removeFromStoredBy(dstoreModel.getPort());
                                 }
                             });
+                            System.out.println("\tDeleted the Dstore " + key + " stored dstores are now: " + dstores);
                         }
                     }
                 }
-                try {
-                    Thread.sleep(timeout);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
             }
-        }).start();
-    }
-
-    private void listen() {
-        try {
-            ServerSocket server = new ServerSocket(cport);
-            while (true) {
-                Socket client = server.accept();
-                BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
-                String message = "";
-                message = in.readLine();
-                if (message != null) {
-                    String[] splitMessage = message.split(" ");
-
-                    new Thread(() -> {
-                        if (splitMessage[0].equals(Protocol.JOIN_TOKEN)) {
-                            joinDstore(client, splitMessage);
-                        } else {
-                            listenToClientMessages(client, splitMessage, in);
-                        }
-                    }).start();
-                }
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
         }
     }
 
-    private void listenToClientMessages(Socket client, String[] splitMessage, BufferedReader in) {
-        System.out.println("Client has connected");
-        System.out.println("Message received: " + Arrays.toString(splitMessage) + " from: " + client);
-        handleMessage(client, splitMessage);
-        String clientMessage = "";
-        do {
-            try {
-                clientMessage = in.readLine();
-                if (clientMessage != null) {
-                    var splitClientMessage = clientMessage.split(" ");
-                    handleMessage(client, splitClientMessage);
-                }
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+
+    public void listen() {
+        try (ServerSocket server = new ServerSocket(cport)) {
+            while (true) {
+                Socket client = server.accept();
+                new Thread(() -> {
+                    try {
+                        BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
+                        String message = "";
+                        message = in.readLine();
+                        if (message != null) {
+                            String[] splitMessage = message.split(" ");
+                            if (splitMessage[0].equals(Protocol.JOIN_TOKEN)) {
+                                joinDstore(client, splitMessage);
+                            } else {
+                                handleMessage(client, splitMessage);
+                                listenToMessage(client, in);
+                            }
+                        }
+                    } catch (IOException e) {
+                        System.err.println("There was an error trying to establish a connection with the client");
+                        e.printStackTrace();
+                    }
+                }).start();
             }
-        } while (clientMessage != null);
-        try {
-            System.out.println("Closing the client " + client.getPort());
-            in.close();
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            e.printStackTrace();
+        }
+    }
+
+    private void listenToMessage(Socket client, BufferedReader in) {
+        String clientMessage = "";
+        try {
+            while ((clientMessage = in.readLine()) != null) {
+                String[] splitMessage = clientMessage.split(" ");
+                System.out.println("Client has been connected: " + client.getPort());
+                handleMessage(client, splitMessage);
+            }
+        } catch (IOException e) {
+            System.err.println("Error reading client message: " + e.getMessage());
+        } finally {
+            try {
+                System.out.println("Closing the client " + client.getPort());
+                in.close();
+                client.close();
+            } catch (IOException e) {
+                System.err.println("Error closing client socket: " + e.getMessage());
+            }
         }
     }
 
@@ -222,6 +251,7 @@ public class Controller {
             e.printStackTrace();
         } catch (Exception e) {
             System.err.println("There was an unknown error when creating the DIndex to store or when sending the STORE_TO message to client: " + client.getPort());
+            e.printStackTrace();
         }
     }
 
@@ -283,7 +313,7 @@ public class Controller {
         }
     }
 
-    private void remove(Socket client, String fileName) {
+    private synchronized void remove(Socket client, String fileName) {
         System.out.println("Removing the file " + fileName);
         Index index;
         ArrayList<Integer> storedBy;
@@ -333,7 +363,7 @@ public class Controller {
                         System.out.println("Was expecting REMOVE ACK but got: null");
                     }
                 } catch (DeadStoreException e) {
-                    throw new RuntimeException(e);
+                    e.printStackTrace();
                 }
             }).start();
         });
@@ -359,6 +389,7 @@ public class Controller {
                     }
                 } catch (DeadStoreException e) {
                     System.err.println("Store for " + dIndex.getFilename() + " failed due to dead dstore");
+                    e.printStackTrace();
                 }
             }).start();
         }
@@ -425,7 +456,7 @@ public class Controller {
         return dStores;
     }
 
-    private synchronized void send(String message, Socket socket) {
+    private void send(String message, Socket socket) {
         try {
             PrintWriter socketWriter = new PrintWriter(socket.getOutputStream());
             socketWriter.print(message);
@@ -433,7 +464,7 @@ public class Controller {
             socketWriter.flush();
             System.out.println(message + " sent to " + socket.getPort());
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            e.printStackTrace();
         }
     }
 }
