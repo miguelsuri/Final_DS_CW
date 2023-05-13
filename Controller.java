@@ -11,29 +11,23 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class Controller {
 
     private final int cport;
     private final int replication;
     private final int timeout;
-    private final int rebalance;
+    private final Rebalancer rebalancer;
 
     private final Map<Socket, Integer> reloadTries = new ConcurrentHashMap<>();
     protected final Map<Integer, DstoreModel> dstores = new ConcurrentHashMap<>();
     protected final Map<String, Index> indices = new ConcurrentHashMap<>();
-//    protected final Rebalancer rebalancer;
 
     public Controller(int cport, int replication, int timeout, int rebalance) {
         this.cport = cport;
         this.replication = replication;
         this.timeout = timeout;
-        this.rebalance = rebalance;
-//        dstores = Collections.synchronizedMap(new HashMap<>());
-//        indices = Collections.synchronizedMap(new HashMap<>());
-//        reloadTries = Collections.synchronizedMap(new HashMap<>());
-//        rebalancer = new Rebalancer(rebalance, this);
+        rebalancer = new Rebalancer(rebalance, this);
     }
 
     public static void main(String[] args) {
@@ -59,58 +53,30 @@ public class Controller {
 
     }
 
-//    private void launchDeadStoreThread() {
-//        while (true) {
-//            synchronized (dstores) {
-//                AtomicReference<Integer> toDeleteInt = new AtomicReference<>(null);
-//                AtomicReference<DstoreModel> toDeleteMod = new AtomicReference<>(null);
-//                dstores.forEach((integer, dstoreModel) -> {
-//                    if (dstoreModel.isDead()) {
-//                        toDeleteInt.set(integer);
-//                        toDeleteMod.set(dstoreModel);
-//                    }
-//                });
-//                if (toDeleteInt.get() != null && toDeleteMod.get() != null) {
-//                    System.out.println("Deleting the Dstore " + toDeleteInt + " from the list of Dstores as it is dead");
-//                    dstores.remove(toDeleteInt, toDeleteMod);
-//                    synchronized (indices) {
-//                        indices.forEach((s, index) -> {
-//                            if (index.getStoredByKeys().contains(toDeleteMod.get().getPort())) {
-//                                index.removeFromStoredBy(toDeleteMod.get().getPort());
-//                            }
-//                        });
-//                    }
-//                }
-//            }
-//            try {
-//                Thread.sleep(1000); // Sleep for 1 second before the next iteration
-//            } catch (InterruptedException e) {
-//                // Handle any exceptions that may occur during sleep
-//                e.printStackTrace();
-//            }
-//        }
-//    }
-
     private void launchDeadStoreThread() {
         while (true) {
             synchronized (dstores) {
-                Iterator<Map.Entry<Integer, DstoreModel>> iterator = dstores.entrySet().iterator();
-                while (iterator.hasNext()) {
-                    Map.Entry<Integer, DstoreModel> entry = iterator.next();
-                    Integer key = entry.getKey();
-                    DstoreModel dstoreModel = entry.getValue();
-                    if (dstoreModel.isDead()) {
-                        System.out.println("Deleting the Dstore " + key + " from the list of Dstores as it is dead");
-                        iterator.remove(); // Remove the DstoreModel using the iterator
-                        synchronized (indices) {
-                            indices.forEach((s, index) -> {
-                                if (index.getStoredByKeys().contains(dstoreModel.getPort())) {
-                                    index.removeFromStoredBy(dstoreModel.getPort());
-                                }
-                            });
-                            System.out.println("\tDeleted the Dstore " + key + " stored dstores are now: " + dstores);
+                try {
+                    Iterator<Map.Entry<Integer, DstoreModel>> iterator = dstores.entrySet().iterator();
+                    while (iterator.hasNext()) {
+                        Map.Entry<Integer, DstoreModel> entry = iterator.next();
+                        Integer key = entry.getKey();
+                        DstoreModel dstoreModel = entry.getValue();
+                        if (dstoreModel.isDead()) {
+                            System.out.println("Deleting the Dstore " + key + " from the list of Dstores as it is dead");
+                            iterator.remove(); // Remove the DstoreModel using the iterator
+                            synchronized (indices) {
+                                indices.forEach((s, index) -> {
+                                    if (index.getStoredByKeys().contains(dstoreModel.getPort())) {
+                                        index.removeFromStoredBy(dstoreModel.getPort());
+                                    }
+                                });
+                                System.out.println("\tDeleted the Dstore " + key + " stored dstores are now: " + dstores);
+                            }
                         }
                     }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
             }
         }
@@ -127,6 +93,7 @@ public class Controller {
                         String message = "";
                         message = in.readLine();
                         if (message != null) {
+                            if (rebalancer.getIsRebalancing().get()) {rebalancer.addToRequestQueue(new Message(message, client));return;}
                             String[] splitMessage = message.split(" ");
                             if (splitMessage[0].equals(Protocol.JOIN_TOKEN)) {
                                 joinDstore(client, splitMessage);
@@ -150,6 +117,7 @@ public class Controller {
         String clientMessage = "";
         try {
             while ((clientMessage = in.readLine()) != null) {
+                if (rebalancer.getIsRebalancing().get()) {rebalancer.addToRequestQueue(new Message(clientMessage, client));return;}
                 String[] splitMessage = clientMessage.split(" ");
                 System.out.println("Client has been connected: " + client.getPort());
                 handleMessage(client, splitMessage);
@@ -167,14 +135,14 @@ public class Controller {
         }
     }
 
-    private void joinDstore(Socket client, String[] splitMessage) {
+    public void joinDstore(Socket client, String[] splitMessage) {
         int dPort = Integer.parseInt(splitMessage[1]);
         System.out.println("Dstore has joined " + dPort);
         dstores.put(dPort, new DstoreModel(client, dPort, timeout));
-//        rebalancer.startRebalanceOperation();
+        rebalancer.startReBalanceOperation();
     }
 
-    private void handleMessage(Socket client, String[] message) {
+    public void handleMessage(Socket client, String[] message) {
         System.out.println("Message received: " + Arrays.toString(message) + " from: " + client);
         if (dstores.size() < replication) {
             send(Protocol.ERROR_NOT_ENOUGH_DSTORES_TOKEN, client);
@@ -204,12 +172,10 @@ public class Controller {
         StringBuilder message = new StringBuilder(Protocol.LIST_TOKEN);
         synchronized (indices) {
             indices.forEach((name, dIndex) -> {
-                synchronized (dIndex) {
-                    System.out.println("LIST: File " + name + " has status " + dIndex.getStatus());
-                    if (dIndex.getStatus() == Index.Status.STORE_COMPLETE) {
-                        System.out.println("FIle " + dIndex.getFilename() + " being put into LIST");
-                        message.append(" ").append(dIndex.getFilename());
-                    }
+                System.out.println("LIST: File " + name + " has status " + dIndex.getStatus());
+                if (dIndex.getStatus() == Index.Status.STORE_COMPLETE) {
+                    System.out.println("FIle " + dIndex.getFilename() + " being put into LIST");
+                    message.append(" ").append(dIndex.getFilename());
                 }
             });
         }
@@ -466,5 +432,13 @@ public class Controller {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public int getReplication() {
+        return replication;
+    }
+
+    public int getTimeout() {
+        return timeout;
     }
 }

@@ -5,6 +5,7 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class DstoreModel {
@@ -12,7 +13,7 @@ public class DstoreModel {
     private Socket socket;
     private int port;
     private BufferedReader reader;
-    private PrintWriter writer;
+    private final PrintWriter writer;
     private int timeout;
     private boolean dead;
     private final ArrayList<String> messageQueue;
@@ -90,7 +91,12 @@ public class DstoreModel {
     private String getMessageFromQueue(String expectedMessages) {
         AtomicReference<String> returnVal = new AtomicReference<>(null);
         synchronized (messageQueue) {
-            messageQueue.stream().filter(s -> s.equals(expectedMessages)).findFirst().ifPresent(returnVal::set);
+            messageQueue.stream().filter(s -> {
+                if (Objects.equals(expectedMessages, Protocol.LIST_TOKEN)) {
+                    return s.split(" ")[0].equals(expectedMessages);
+                } else {
+                    return s.equals(expectedMessages);
+                }}).findFirst().ifPresent(returnVal::set);
             messageQueue.remove(returnVal.get());
         }
         return returnVal.get();
@@ -126,5 +132,9 @@ public class DstoreModel {
 
     public int getNumberOfFiles() {
         return numberOfFiles;
+    }
+
+    public void setNumberOfFiles(int numberOfFiles) {
+        this.numberOfFiles = numberOfFiles;
     }
 }

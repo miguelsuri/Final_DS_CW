@@ -32,16 +32,16 @@ public class ClientMain {
 //        client = new Client(cport, timeout, Logger.LoggingType.ON_FILE_AND_TERMINAL);
 //        try { client.connect(); } catch(IOException e) { e.printStackTrace(); return; }
 //
-//        testClient(cport, timeout, downloadFolder, uploadFolder);
+        testClient(cport, timeout, downloadFolder, uploadFolder);
 
         // launch a number of concurrent clients, each doing the same operations
-        for (int i = 0; i < 10; i++) {
-            new Thread() {
-                public void run() {
-                    test2Client(cport, timeout, downloadFolder, uploadFolder);
-                }
-            }.start();
-        }
+//        for (int i = 0; i < 10; i++) {
+//            new Thread() {
+//                public void run() {
+//                    test2Client(cport, timeout, downloadFolder, uploadFolder);
+//                }
+//            }.start();
+//        }
 
 //        testClient1(cport, timeout, downloadFolder, uploadFolder);
     }

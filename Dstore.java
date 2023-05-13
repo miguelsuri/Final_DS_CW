@@ -2,10 +2,11 @@ import java.io.*;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.file.Files;
+import java.net.UnknownHostException;
 import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.Objects;
+import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class Dstore {
 
@@ -202,12 +203,7 @@ public class Dstore {
         System.out.println("Controller is asking for LIST");
         var message = new StringBuilder(Protocol.LIST_TOKEN + " ");
         if (Objects.requireNonNull(fileFolder.listFiles()).length == 0) {
-            try {
-                send(message.toString(), new Socket(InetAddress.getLoopbackAddress(), cport));
-            } catch (IOException e) {
-                System.err.println("There was an error sending the LIST EMPTY message to the controller");
-                e.printStackTrace();
-            }
+            controllerOut.println(message);
         } else {
             Arrays.stream(Objects.requireNonNull(fileFolder.listFiles())).forEach(file -> {
                 message.append(file.getName()).append(" ");
@@ -219,8 +215,213 @@ public class Dstore {
     }
 
     private void rebalance(String[] message) {
+        System.out.println("Rebalance message received");
 
+        try {
+            Map<Integer, ArrayList<String>> toSend = new HashMap<>();
+            ArrayList<String> toRemove = new ArrayList<>();
+            int numberToSend = Integer.parseInt(message[1]);
+            int totalReceivers = 0;
+            int index = 2;
+
+            for (int i = 0; i < numberToSend; i++) {
+                String name = message[index];
+                index++;
+
+                int numberOfReceivers = Integer.parseInt(message[index]);
+                totalReceivers += numberOfReceivers;
+                index++;
+                for (int j = 0; j < numberOfReceivers; j++) {
+                    Integer receiver = Integer.parseInt(message[index]);
+                    if (!toSend.containsKey(receiver)) {
+                        toSend.put(receiver, new ArrayList<String>());
+                    }
+                    toSend.get(receiver).add(name);
+                    index++;
+                }
+            }
+
+            int numberToRemove = Integer.parseInt(message[index]);
+            index++;
+            for (int k = 0; k < numberToRemove; k++) {
+                toRemove.add(message[index]);
+                index++;
+            }
+
+            rebalanceRemove(toRemove);
+
+            CountDownLatch latch = new CountDownLatch(totalReceivers);
+            waitForRebalanceStoreACKs(toSend, latch);
+
+            if (latch.await(timeout, TimeUnit.MILLISECONDS)) {
+                System.out.println("Re-balance store successfully completed");
+                send(Protocol.REBALANCE_COMPLETE_TOKEN, new Socket(InetAddress.getLoopbackAddress(), cport));
+            } else {
+                System.out.println("Timed out while waiting for the Dstore responses when performing re-balance");
+            }
+        } catch (InterruptedException | IOException e) {
+            e.printStackTrace();
+        }
     }
+
+    private void waitForRebalanceStoreACKs(Map<Integer, ArrayList<String>> toSend, CountDownLatch latch) {
+        for (Integer dstore : toSend.keySet()) {
+            for (String filename : toSend.get(dstore)) {
+                new Thread(() -> {
+                    try {
+                        System.out.println("Sending re-balance file " + filename + " to dstore " + dstore);
+                        Socket socket = new Socket(InetAddress.getLocalHost(), dstore);
+                        File file = new File(fileFolder.getPath() + File.separator + filename);
+                        String message = Protocol.REBALANCE_STORE_TOKEN + " " + filename + " " + file.length();
+                        send(message, socket);
+
+                        BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                        String receivedMessage = in.readLine();
+                        if (!receivedMessage.equals(Protocol.ACK_TOKEN)) {
+                            System.err.println("Dstore " + dstore + " should have sent ACK but " + port + " received " + receivedMessage);
+                            return;
+                        }
+                        rebalanceSendFileContents(socket, filename);
+                        in.close();
+                        socket.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    } finally {
+                        latch.countDown();
+                    }
+                }).start();
+            }
+        }
+    }
+
+    private void rebalanceSendFileContents(Socket socket, String filename) throws IOException {
+        byte[] content = new byte[256];
+        int len;
+        FileInputStream fileIn = new FileInputStream(new File(fileFolder, filename));
+        OutputStream fileOut = socket.getOutputStream();
+        do {
+            len = fileIn.read(content);
+            if (len >= 0) {
+                fileOut.write(content, 0, len);
+                fileOut.flush();
+            }
+        } while (len > 0);
+        fileIn.close();
+        fileOut.close();
+    }
+
+    private void rebalanceRemove(ArrayList<String> toRemove) {
+        for (String filename : toRemove) {
+            System.out.println("Removing file " + filename);
+            new File(fileFolder, filename).delete();
+        }
+    }
+
+
+//        new Thread(() -> {
+//            //Interpret files to send and files to remove from the message
+//            Map<Integer, List<String>> filesToSend;
+//            String[] filesToRemove;
+//            int index;
+//
+//            String tmessage = "";
+//            for(String s : message) {
+//                tmessage = tmessage + " " + s;
+//            }
+//            System.out.println("Interpreting message:" + tmessage);
+//            int numberToSend = Integer.parseInt(message[1]);
+//            int totalReceivers = 0;
+//            index = 2;
+//            filesToSend = new HashMap<Integer,List<String>>();
+//            for(int i=0; i<numberToSend; i++) {
+//                String name = message[index];
+//                index++;
+//
+//                int numberOfReceivers = Integer.parseInt(message[index]);
+//                totalReceivers += numberOfReceivers;
+//                index++;
+//                for(int j=0; j<numberOfReceivers; j++) {
+//                    Integer receiver = Integer.parseInt(message[index]);
+//                    if(!filesToSend.containsKey(receiver)) {
+//                        filesToSend.put(receiver,new ArrayList<String>());
+//                    }
+//                    filesToSend.get(receiver).add(name);
+//                    index++;
+//                }
+//            }
+//
+//            int numberToRemove = Integer.parseInt(message[index]);
+//            index++;
+//            filesToRemove = new String[numberToRemove];
+//            for(int k=0; k<numberToRemove; k++) {
+//                filesToRemove[k] = message[index];
+//                index++;
+//            }
+//            System.out.println("Interpreting complete, will send " + numberToSend + " and remove " + numberToRemove);
+//
+//            //Send each file to send to the Dstore at the specified port number
+//            CountDownLatch latch = new CountDownLatch(totalReceivers);
+//            for(Integer dstore : filesToSend.keySet()) {
+//                for(String filename : filesToSend.get(dstore)) {
+//                    new Thread(() -> {
+//                        try {
+//                            System.out.println("Sending " + filename + " to store " + dstore);
+//                            Socket socket = new Socket(InetAddress.getLocalHost(), dstore.intValue());
+//                            PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+//                            File f = new File(fileFolder.getPath() + File.separator + filename);
+//                            long fileSize = f.length();
+//                            String dstoreMessage = Protocol.REBALANCE_STORE_TOKEN + " " + filename + " " + fileSize;
+//                            out.println(dstoreMessage);
+//
+//                            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+//                            String receivedMessage = in.readLine();
+//                            if(!receivedMessage.equals(Protocol.ACK_TOKEN)) {
+//                                //Log error
+//                                System.err.println("Dstore " + dstore + " should have sent ACK but " + port + " received " + receivedMessage);
+//                            }
+//
+//                            byte[] content = new byte[256];
+//                            int len;
+//                            FileInputStream fileIn = new FileInputStream(new File(fileFolder, filename));
+//                            OutputStream fileOut = socket.getOutputStream();
+//                            do {
+//                                len = fileIn.read(content);
+//                                if(len >= 0) {
+//                                    fileOut.write(content, 0, len);
+//                                    fileOut.flush();
+//                                }
+//                            }
+//                            while(len > 0);
+//                            fileIn.close();
+//                            fileOut.close();
+//                            in.close();
+//                            out.close();
+//                            socket.close();
+//                        }
+//                        catch(IOException e) {
+//                            e.printStackTrace();
+//                        }
+//                        finally {
+//                            try {latch.countDown();} catch(Exception e) {}
+//                        }
+//                    }).start();
+//                }
+//            }
+//            try {latch.await(timeout, TimeUnit.MILLISECONDS);} catch(Exception e) {e.printStackTrace();}
+//
+//            //Remove each file to remove from fileFolder
+//            for(String filename : filesToRemove) {
+//                System.out.println("Removing file " + filename);
+//                new File(fileFolder, filename).delete();
+//            }
+//
+//            //Send REBALANCE_COMPLETE message to client (the controller)
+//            try {
+//                send(Protocol.REBALANCE_COMPLETE_TOKEN, new Socket(InetAddress.getLoopbackAddress(), cport));
+//            } catch (IOException e) {
+//                throw new RuntimeException(e);
+//            }
+//        }).start();
 
     private void joinDstore() {
         try {
