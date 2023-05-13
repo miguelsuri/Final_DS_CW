@@ -135,11 +135,14 @@ public class Controller {
         }
     }
 
-    public void joinDstore(Socket client, String[] splitMessage) {
+    public synchronized void joinDstore(Socket client, String[] splitMessage) {
         int dPort = Integer.parseInt(splitMessage[1]);
         System.out.println("Dstore has joined " + dPort);
         dstores.put(dPort, new DstoreModel(client, dPort, timeout));
-        rebalancer.startReBalanceOperation();
+        if (!(dstores.size() < replication) && !indices.isEmpty()) {
+            System.out.println(indices);
+            rebalancer.startReBalanceOperation();
+        }
     }
 
     public void handleMessage(Socket client, String[] message) {

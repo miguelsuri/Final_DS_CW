@@ -1,0 +1,28 @@
+Connection established to port 12345
+Message sent to port 12345: LIST
+List operation started
+Message received from port 12345: ERROR_NOT_ENOUGH_DSTORES
+ERROR: Not enough Dstores have joined the data store yet
+List operation failed
+Message sent to port 12345: STORE file3.txt 22
+Store operation started for file file3.txt
+Message received from port 12345: ERROR_NOT_ENOUGH_DSTORES
+ERROR: Not enough Dstores have joined the data store yet
+Message sent to port 12345: STORE file3.txt 22
+Store operation started for file file3.txt
+Message received from port 12345: ERROR_NOT_ENOUGH_DSTORES
+ERROR: Not enough Dstores have joined the data store yet
+Message sent to port 12345: STORE file2.txt 21
+Store operation started for file file2.txt
+Message received from port 12345: ERROR_NOT_ENOUGH_DSTORES
+ERROR: Not enough Dstores have joined the data store yet
+Message sent to port 12345: LIST
+List operation started
+Message received from port 12345: ERROR_NOT_ENOUGH_DSTORES
+ERROR: Not enough Dstores have joined the data store yet
+List operation failed
+Message sent to port 12345: LIST
+List operation started
+Message received from port 12345: ERROR_NOT_ENOUGH_DSTORES
+ERROR: Not enough Dstores have joined the data store yet
+List operation failed

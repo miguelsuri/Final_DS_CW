@@ -255,11 +255,11 @@ public class Dstore {
 
             if (latch.await(timeout, TimeUnit.MILLISECONDS)) {
                 System.out.println("Re-balance store successfully completed");
-                send(Protocol.REBALANCE_COMPLETE_TOKEN, new Socket(InetAddress.getLoopbackAddress(), cport));
+                controllerOut.println(Protocol.REBALANCE_COMPLETE_TOKEN);
             } else {
                 System.out.println("Timed out while waiting for the Dstore responses when performing re-balance");
             }
-        } catch (InterruptedException | IOException e) {
+        } catch (InterruptedException e) {
             e.printStackTrace();
         }
     }

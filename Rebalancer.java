@@ -284,7 +284,7 @@ public class Rebalancer {
                     System.out.println("REBALANCE LATCH COUNTING DOWN FOR " + cDstore);
                     latch.countDown();
                 } else {
-                    System.out.println("Was expecting REMOVE ACK but got: null");
+                    System.out.println("Was expecting REBALANCE_COMPLETE_TOKEN but got: null");
                 }
             } catch (DeadStoreException e) {
                 throw new RuntimeException(e);
@@ -335,7 +335,7 @@ public class Rebalancer {
     }
 
     public void addToRequestQueue(Message message) {
-        System.out.println("Adding the message " + message.toString() + " to request queue in the re-balancer");
+        System.out.println("Adding the message " + message.getMessage() + " to request queue in the re-balancer");
         requestQueue.add(message);
     }
 
