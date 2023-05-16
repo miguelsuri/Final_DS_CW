@@ -5,9 +5,8 @@ import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class Rebalancer {
 
@@ -69,18 +68,40 @@ public class Rebalancer {
         }));
 
         // TODO: step 2 ensure that all dstores have files allocated evenly
-        if (isSpreadCorrectly(currentDstoreFileAlloc)) {
+        if (!isSpreadCorrectly(currentDstoreFileAlloc)) {
             return;
         }
 
         // TODO: step 2.1 if files are evenly allocated rebalance done
         this.currentFileAlloc = currentDstoreFileAlloc;
-        this.rebalanceFileAlloc = currentFileAlloc;
-        checkFilesAreEvenlyStored();
+        this.rebalanceFileAlloc = spreadFiles(removeFilesFromDeadDstores(currentDstoreFileAlloc));
+        sendRebalance();
+    }
+
+    private Map<Integer, ArrayList<String>> removeFilesFromDeadDstores(Map<Integer, ArrayList<String>> oldDstoreFiles) {
+        System.out.println("Checking if any files need to be deleted due to dead Dstores");
+        Map<Integer, ArrayList<String>> finalDstoreFiles = new HashMap<>();
+        List<String> nonDeadFiles = new ArrayList<>();
+        oldDstoreFiles.forEach((integer, strings) -> {
+            ArrayList<String> files = new ArrayList<>();
+            strings.forEach(file -> {
+                Index index = null;
+                if (controller.indices.containsKey(file)) index = controller.indices.get(file);
+                if (index == null) return;
+                if (index.getStatus() == Index.Status.STORE_COMPLETE) {
+                    files.add(file);
+                    if (nonDeadFiles.contains(file)) nonDeadFiles.add(file);
+                } else {
+                    System.out.println("Removing the file " + file + " from indices as it was stored by a dead Dstore");
+                    controller.indices.remove(file);
+                }
+            });
+            finalDstoreFiles.put(integer, files);
+        });
+        return finalDstoreFiles;
     }
 
     private boolean isSpreadCorrectly(HashMap<Integer, ArrayList<String>> currentDstoreFileAlloc) {
-        System.out.println("Checking that the files are stored evenly across all Dstores");
         if (controller.dstores.size() == 0) return true;
         var needSpread = new AtomicBoolean(false);
         float x = controller.getReplication();
@@ -90,122 +111,64 @@ public class Rebalancer {
         var ceiling = Math.ceil((x * y) / z);
         System.out.println(currentDstoreFileAlloc.toString());
         currentDstoreFileAlloc.forEach((dPort, sFile) -> {
-            System.out.println("Checking the Dstore " + dPort);
             if (sFile.size() < floor) {
                 needSpread.set(true);
             }
             if (sFile.size() > ceiling) {
                 needSpread.set(true);
             }
-            if (needSpread.get()) {
-                System.out.println("\tThe Dstore " + dPort + " is not evenly storing files in the rabalanceFileAlloc:"
-                        + "\t\tFloor: " + floor + " < " + sFile.size()
-                        + "\t\tCeiling: " + ceiling + " > " + sFile.size());
-                return;
-            }
-            System.out.println("\tThe Dstore " + dPort + " is evenly storing files in the rabalanceFileAlloc:");
-            sFile.forEach(s -> System.out.println("\t\t" + s));
         });
+        System.out.println("The re-balancer will need re-balancing " + needSpread.get());
         return needSpread.get();
     }
 
-    private void checkFilesAreEvenlyStored() {
-        System.out.println("Checking that the files are stored evenly across all Dstores");
-        if (controller.dstores.size() == 0) {
-            return;
-        }
-        var needSpread = new AtomicBoolean(false);
-        float x = controller.getReplication();
-        float y = controller.indices.size();
-        float z = controller.dstores.size();
-        var floor = Math.floor((x * y) / z);
-        var ceiling = Math.ceil((x * y) / z);
-        var lowestStoringDstores = new ArrayList<Integer>();
-        var highestStoringDstores = new ArrayList<Integer>();
-        System.out.println(currentFileAlloc.toString());
-        rebalanceFileAlloc.forEach((dPort, sFile) -> {
-            System.out.println("Checking the Dstore " + dPort);
-            if (sFile.size() < floor) {
-                lowestStoringDstores.add(dPort);
-                needSpread.set(true);
-            }
-            if (sFile.size() > ceiling) {
-                highestStoringDstores.add(dPort);
-                needSpread.set(true);
-            }
-            if (needSpread.get()) {
-                System.out.println("\tThe Dstore " + dPort + " is not evenly storing files in the rabalanceFileAlloc:"
-                        + "\t\tFloor: " + floor + " < " + sFile.size()
-                        + "\t\tCeiling: " + ceiling + " > " + sFile.size());
-                return;
-            }
-            System.out.println("\tThe Dstore " + dPort + " is evenly storing files in the rabalanceFileAlloc:");
-            sFile.forEach(s -> System.out.println("\t\t" + s));
-        });
-        if (needSpread.get()) {
-            Collections.sort(lowestStoringDstores);
-            Collections.sort(highestStoringDstores);
-            if (!lowestStoringDstores.isEmpty() && !highestStoringDstores.isEmpty()) {
-                spreadFiles(lowestStoringDstores.get(0), highestStoringDstores.get(0));
-            } else if (!lowestStoringDstores.isEmpty()) {
-                spreadFiles(lowestStoringDstores.get(0), -1);
-            } else {
-                spreadFiles(-1, highestStoringDstores.get(0));
-            }
-        } else {
-            sendRebalance();
-        }
-    }
-
-    private void spreadFiles(Integer lowestStoringDstore, Integer highestStoringDstore) {
-        System.out.println("Performing a spread of files");
-        if (lowestStoringDstore != -1 && highestStoringDstore != -1) {
-            var lowFiles = rebalanceFileAlloc.get(lowestStoringDstore);
-            var highFiles = currentFileAlloc.get(highestStoringDstore).stream().filter(string -> !lowFiles.contains(string)).toList();
-            System.out.println("Adding file " + highFiles.get(0) + " to " + lowestStoringDstore);
-            System.out.println("Deleting file " + highFiles.get(0) + " from " + highestStoringDstore);
-            addToRebalanceFileAlloc(lowestStoringDstore, highFiles.get(0));
-            deleteFromRebalanceFileAlloc(highestStoringDstore, highFiles.get(0));
-        } else if (lowestStoringDstore != -1) {
-            var lowFiles = rebalanceFileAlloc.get(lowestStoringDstore);
-            AtomicReference<Integer> highFilesDstore = new AtomicReference<>(controller.dstores.values().stream().filter(dstoreModel -> dstoreModel.getPort() != lowestStoringDstore).findFirst().get().getPort());
-            System.out.println(rebalanceFileAlloc);
-            rebalanceFileAlloc.forEach((integer, files) -> {
-                System.out.println(highFilesDstore.get());
-                System.out.println(rebalanceFileAlloc.get(highFilesDstore.get()));
-                if (rebalanceFileAlloc.get(highFilesDstore.get()).size() < files.size()) {
-                    highFilesDstore.set(integer);
-                }
-            });
-            System.out.println(highFilesDstore.get());
-            System.out.println(rebalanceFileAlloc);
-            System.out.println(rebalanceFileAlloc.get(highFilesDstore.get()));
-            var highFiles = rebalanceFileAlloc.get(highFilesDstore.get()).stream().filter(string -> !lowFiles.contains(string)).toList();
-            System.out.println(highFiles);
-            System.out.println("Adding file " + highFiles.get(0) + " to " + lowestStoringDstore);
-            System.out.println("Deleting file " + highFiles.get(0) + " from " + highFilesDstore.get());
-            addToRebalanceFileAlloc(lowestStoringDstore, highFiles.get(0));
-            deleteFromRebalanceFileAlloc(highFilesDstore.get(), highFiles.get(0));
-        } else {
-            AtomicReference<Integer> lowFilesDstore = new AtomicReference<>((Integer) rebalanceFileAlloc.keySet().toArray()[0]);
-            AtomicReference<Integer> highFilesDstore = new AtomicReference<>((Integer) rebalanceFileAlloc.keySet().toArray()[0]);
-            rebalanceFileAlloc.forEach((integer, files) -> {
-                if (rebalanceFileAlloc.get(highFilesDstore.get()).size() < files.size()) {
-                    highFilesDstore.set(integer);
-                }
-                if (rebalanceFileAlloc.get(lowFilesDstore.get()).size() > files.size()) {
-                    lowFilesDstore.set(integer);
-                }
-            });
-            var lowFiles = rebalanceFileAlloc.get(lowFilesDstore);
-            var highFiles = rebalanceFileAlloc.get(highFilesDstore).stream().filter(string -> !lowFiles.contains(string)).toList();
-            System.out.println("Adding file " + highFiles.get(0) + " to " + lowFilesDstore);
-            System.out.println("Deleting file " + highFiles.get(0) + " from " + highFilesDstore);
-            addToRebalanceFileAlloc(lowFilesDstore.get(), highFiles.get(0));
-            deleteFromRebalanceFileAlloc(highFilesDstore.get(), highFiles.get(0));
-        }
-        checkFilesAreEvenlyStored();
-    }
+//    private void checkFilesAreEvenlyStored() {
+//        System.out.println("Checking that the files are stored evenly across all Dstores");
+//        if (controller.dstores.size() == 0) {
+//            return;
+//        }
+//        var needSpread = new AtomicBoolean(false);
+//        float x = controller.getReplication();
+//        float y = controller.indices.size();
+//        float z = controller.dstores.size();
+//        var floor = Math.floor((x * y) / z);
+//        var ceiling = Math.ceil((x * y) / z);
+//        var lowestStoringDstores = new ArrayList<Integer>();
+//        var highestStoringDstores = new ArrayList<Integer>();
+//        System.out.println(currentFileAlloc.toString());
+//        rebalanceFileAlloc.forEach((dPort, sFile) -> {
+//            System.out.println("Checking the Dstore " + dPort);
+//            if (sFile.size() < floor) {
+//                lowestStoringDstores.add(dPort);
+//                needSpread.set(true);
+//            }
+//            if (sFile.size() > ceiling) {
+//                highestStoringDstores.add(dPort);
+//                needSpread.set(true);
+//            }
+//            if (needSpread.get()) {
+//                System.out.println("\tThe Dstore " + dPort + " is not evenly storing files in the rabalanceFileAlloc:"
+//                        + "\t\tFloor: " + floor + " < " + sFile.size()
+//                        + "\t\tCeiling: " + ceiling + " > " + sFile.size());
+//                return;
+//            }
+//            System.out.println("\tThe Dstore " + dPort + " is evenly storing files in the rabalanceFileAlloc:");
+//            sFile.forEach(s -> System.out.println("\t\t" + s));
+//        });
+//        if (needSpread.get()) {
+//            Collections.sort(lowestStoringDstores);
+//            Collections.sort(highestStoringDstores);
+//            if (!lowestStoringDstores.isEmpty() && !highestStoringDstores.isEmpty()) {
+//                spreadFiles(lowestStoringDstores.get(0), highestStoringDstores.get(0));
+//            } else if (!lowestStoringDstores.isEmpty()) {
+//                spreadFiles(lowestStoringDstores.get(0), -1);
+//            } else {
+//                spreadFiles(-1, highestStoringDstores.get(0));
+//            }
+//        } else {
+//            sendRebalance();
+//        }
+//    }
 
     private void sendRebalance() {
         System.out.println("Finally sending the re-balance");
@@ -300,6 +263,143 @@ public class Rebalancer {
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
+    }
+
+    private Map<Integer, ArrayList<String>> spreadFiles(Map<Integer, ArrayList<String>> dstoreFiles) {
+        //        System.out.println("Performing a spread of files");
+//        if (lowestStoringDstore != -1 && highestStoringDstore != -1) {
+//            var lowFiles = rebalanceFileAlloc.get(lowestStoringDstore);
+//            var highFiles = currentFileAlloc.get(highestStoringDstore).stream().filter(string -> !lowFiles.contains(string)).toList();
+//            System.out.println("Adding file " + highFiles.get(0) + " to " + lowestStoringDstore);
+//            System.out.println("Deleting file " + highFiles.get(0) + " from " + highestStoringDstore);
+//            addToRebalanceFileAlloc(lowestStoringDstore, highFiles.get(0));
+//            deleteFromRebalanceFileAlloc(highestStoringDstore, highFiles.get(0));
+//        } else if (lowestStoringDstore != -1) {
+//            var lowFiles = rebalanceFileAlloc.get(lowestStoringDstore);
+//            AtomicReference<Integer> highFilesDstore = new AtomicReference<>(controller.dstores.values().stream().filter(dstoreModel -> dstoreModel.getPort() != lowestStoringDstore).findFirst().get().getPort());
+//            rebalanceFileAlloc.forEach((integer, files) -> {
+//                if (rebalanceFileAlloc.get(highFilesDstore.get()).size() < files.size()) {
+//                    highFilesDstore.set(integer);
+//                }
+//            });
+//            System.out.println(highFilesDstore.get());
+//            var highFiles = rebalanceFileAlloc.get(highFilesDstore.get()).stream().filter(string -> !lowFiles.contains(string)).toList();
+//            System.out.println("Adding file " + highFiles.get(0) + " to " + lowestStoringDstore);
+//            System.out.println("Deleting file " + highFiles.get(0) + " from " + highFilesDstore.get());
+//            addToRebalanceFileAlloc(lowestStoringDstore, highFiles.get(0));
+//            deleteFromRebalanceFileAlloc(highFilesDstore.get(), highFiles.get(0));
+//        } else {
+//            AtomicReference<Integer> lowFilesDstore = new AtomicReference<>((Integer) rebalanceFileAlloc.keySet().toArray()[0]);
+//            AtomicReference<Integer> highFilesDstore = new AtomicReference<>((Integer) rebalanceFileAlloc.keySet().toArray()[0]);
+//            rebalanceFileAlloc.forEach((integer, files) -> {
+//                if (rebalanceFileAlloc.get(highFilesDstore.get()).size() < files.size()) {
+//                    highFilesDstore.set(integer);
+//                }
+//                if (rebalanceFileAlloc.get(lowFilesDstore.get()).size() > files.size()) {
+//                    lowFilesDstore.set(integer);
+//                }
+//            });
+//            var lowFiles = rebalanceFileAlloc.get(lowFilesDstore.get());
+//            var highFiles = rebalanceFileAlloc.get(highFilesDstore.get()).stream().filter(string -> !lowFiles.contains(string)).toList();
+//            System.out.println("Adding file " + highFiles.get(0) + " to " + lowFilesDstore);
+//            System.out.println("Deleting file " + highFiles.get(0) + " from " + highFilesDstore);
+//            addToRebalanceFileAlloc(lowFilesDstore.get(), highFiles.get(0));
+//            deleteFromRebalanceFileAlloc(highFilesDstore.get(), highFiles.get(0));
+//        }
+//        checkFilesAreEvenlyStored();
+        Map<String, Integer> fileStoredByAmount = new HashMap<>();
+        dstoreFiles.keySet().forEach(ds -> dstoreFiles.get(ds).forEach(file -> fileStoredByAmount.merge(file, 1, Integer::sum)));
+
+        fileStoredByAmount.keySet().forEach(file -> {
+            System.out.println("Checking " + file + " is properly balanced across all Dstores");
+            if (fileStoredByAmount.get(file) == controller.getReplication()) {
+                System.out.println("The file " + file + " is properly balanced");
+                return;
+            }
+            if (fileStoredByAmount.get(file) > controller.getReplication()) {
+                System.out.println("File " + file + " is over the replication amount: " + fileStoredByAmount.get(file) + " > " + controller.getReplication());
+                dstoreFiles.keySet().forEach(ds -> {
+                    if (dstoreFiles.get(ds).contains(file)) {
+                        System.out.println("Found a Dstore that contains the file " + file + ", proceeding to REMOVE it...");
+                        dstoreFiles.get(ds).remove(file);
+                        fileStoredByAmount.put(file, fileStoredByAmount.get(file) - 1);
+                        System.out.println("\t" + file + " was removed from " + ds);
+                    }
+                });
+            }
+            if (fileStoredByAmount.get(file) < controller.getReplication()) {
+                System.out.println("File " + file + " is under the replication amount: " + fileStoredByAmount.get(file) + " > " + controller.getReplication());
+                dstoreFiles.keySet().forEach(ds -> {
+                    if (dstoreFiles.get(ds).contains(file)) {
+                        System.out.println("Found a Dstore that contains the file " + file + ", proceeding to ADD TO it...");
+                        dstoreFiles.get(ds).add(file);
+                        fileStoredByAmount.put(file, fileStoredByAmount.get(file) + 1);
+                        System.out.println("\t" + file + " added to " + ds);
+                    }
+                });
+            }
+        });
+
+        return finalReBalanceOfFiles(fileStoredByAmount, dstoreFiles);
+    }
+
+    private Map<Integer, ArrayList<String>> finalReBalanceOfFiles(Map<String, Integer> fileStoredByAmount, Map<Integer, ArrayList<String>> dstoreFiles) {
+        float x = controller.getReplication();
+        float y = fileStoredByAmount.size();
+        float z = dstoreFiles.size();
+        var floor = Math.floor((x * y) / z);
+        var ceiling = Math.ceil((x * y) / z);
+        Integer lowestStoringDstore = getLowestStoringDstore(dstoreFiles);
+        Integer highestStoringDstore = getHighestStoringDstore(dstoreFiles);
+
+        // Using a timeout in case that the re-balancing goes on for an infinite amount of time
+        var currentTime = System.currentTimeMillis();
+        var stoppingTime = currentTime + controller.getTimeout();
+        while ((dstoreFiles.get(highestStoringDstore).size() > ceiling || dstoreFiles.get(lowestStoringDstore).size() < floor) && (System.currentTimeMillis() < stoppingTime)) {
+            for (String thisFile : dstoreFiles.get(highestStoringDstore)) {
+                //        if (needSpread.get()) {
+//            Collections.sort(lowestStoringDstores);
+//            Collections.sort(highestStoringDstores);
+//            if (!lowestStoringDstores.isEmpty() && !highestStoringDstores.isEmpty()) {
+//                spreadFiles(lowestStoringDstores.get(0), highestStoringDstores.get(0));
+//            } else if (!lowestStoringDstores.isEmpty()) {
+//                spreadFiles(lowestStoringDstores.get(0), -1);
+//            } else {
+//                spreadFiles(-1, highestStoringDstores.get(0));
+//            }
+//        } else {
+//            sendRebalance();
+//        }
+                if (!dstoreFiles.get(lowestStoringDstore).contains(thisFile)) {
+                    dstoreFiles.get(lowestStoringDstore).add(thisFile);
+                    dstoreFiles.get(highestStoringDstore).remove(thisFile);
+                    break;
+                }
+            }
+            lowestStoringDstore = getLowestStoringDstore(dstoreFiles);
+            highestStoringDstore = getHighestStoringDstore(dstoreFiles);
+        }
+        return dstoreFiles;
+    }
+
+    private Integer getHighestStoringDstore(Map<Integer, ArrayList<String>> dstoreFiles) {
+        final AtomicInteger[] lowestDstore = {new AtomicInteger((Integer) dstoreFiles.keySet().toArray()[0])};
+        dstoreFiles.forEach((ds, files) -> {
+            if (files.size() > dstoreFiles.get(lowestDstore[0].get()).size()) {
+                lowestDstore[0].set(ds);
+            }
+        });
+        return lowestDstore[0].get();
+    }
+
+    private Integer getLowestStoringDstore(Map<Integer, ArrayList<String>> dstoreFiles) {
+        final AtomicInteger[] highestDstore = {new AtomicInteger((Integer) dstoreFiles.keySet().toArray()[0])};
+        dstoreFiles.forEach((ds, files) -> {
+            if (files.size() < dstoreFiles.get(highestDstore[0].get()).size()) {
+                highestDstore[0].set(ds);
+            }
+        });
+        return highestDstore[0].get();
     }
 
 

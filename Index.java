@@ -60,6 +60,10 @@ public class Index {
         storedBy.remove(dstore);
     }
 
+    public void addToStoredBy(Integer dstore, Socket socket) {
+        storedBy.put(dstore, socket);
+    }
+
     public Status getStatus() {
         return status;
     }

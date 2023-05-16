@@ -37,15 +37,15 @@ public class ClientMain {
 //        testClient(cport, timeout, downloadFolder, uploadFolder);
 
         // launch a number of concurrent clients, each doing the same operations
-        for (int i = 0; i < 10; i++) {
-            new Thread() {
-                public void run() {
-                    test2Client(cport, timeout, downloadFolder, uploadFolder);
-                }
-            }.start();
-        }
+//        for (int i = 0; i < 10; i++) {
+//            new Thread() {
+//                public void run() {
+//                    test2Client(cport, timeout, downloadFolder, uploadFolder);
+//                }
+//            }.start();
+//        }
 
-//        testClient1(cport, timeout, downloadFolder, uploadFolder);
+        testClient1(cport, timeout, downloadFolder, uploadFolder);
     }
 
     private static void testClient1(int cport, int timeout, File downloadFolder, File uploadFolder) {
@@ -90,28 +90,11 @@ public class ClientMain {
                 }
             }
 
-            String list[] = null;
             try {
-                list = list(client);
-            } catch (IOException e) {
+                Thread.sleep(20000);
+            } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-
-            if (list != null)
-                for (String filename : list)
-                    try {
-                        client.load(filename, downloadFolder);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-
-            if (list != null)
-                for (String filename : list)
-                    try {
-                        client.remove(filename);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
 
             try {
                 list(client);

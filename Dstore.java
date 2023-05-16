@@ -70,8 +70,10 @@ public class Dstore {
                     try {
                         BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
                         String message = in.readLine();
-                        System.out.println("Message received: " + message + " from: " + client);
-                        handleMessage(client, message.split(" "));
+                        if (message != null) {
+                            System.out.println("Message received: " + message + " from: " + client);
+                            handleMessage(client, message.split(" "));
+                        }
                     } catch (Exception e) {
                         e.printStackTrace();
                     }

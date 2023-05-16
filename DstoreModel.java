@@ -62,7 +62,10 @@ public class DstoreModel {
             var end = start + timeout;
             while(receivedMessage == null && System.currentTimeMillis() < end) {
                 receivedMessage = getMessageFromQueue(expectedMessages);
-                if (dead) {throw new DeadStoreException(String.valueOf(this.getPort()));}
+                if (dead) {
+                    System.out.println("Dstore " + port + " has dies during the receive method");
+                    throw new DeadStoreException(String.valueOf(this.getPort()));
+                }
             }
             return receivedMessage;
         } else {
@@ -71,7 +74,10 @@ public class DstoreModel {
     }
 
     public String sendAndWaitForResponse(String message, String expectedMessages) throws DeadStoreException {
-        if (dead) throw new DeadStoreException("Tried to send and receive but DStore is dead");
+        if (dead) {
+            System.out.println("Dstore " + port + " has dies during the send and receive method");
+            throw new DeadStoreException("Tried to send and receive but DStore is dead");
+        }
         synchronized(writer) {
             writer.println(message);
             writer.flush();
